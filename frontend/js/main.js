@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const API_BASE_URL = 'http://127.0.0.1:5000/api';
 
     // --- State ---
-    let tsParticles;
+    let particlesContainer;
 
     // --- Functions ---
 
@@ -38,58 +38,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function handleImport() {
-        if (!confirm("Voulez-vous vraiment importer les données ? Cela écrasera les données actuelles.")) return;
+    async function handleApiPost(url, confirmMessage) {
+        if (!confirm(confirmMessage)) return;
         
         try {
-            const response = await fetch(`${API_BASE_URL}/import`, { method: 'POST' });
+            const response = await fetch(url, { method: 'POST' });
             const result = await response.json();
-            if (!response.ok) throw new Error(result.error || 'Failed to import data');
-            
-            alert(result.message);
-            await updateStats();
-        } catch (error) {
-            console.error('Import failed:', error);
-            alert(`Erreur lors de l'import : ${error.message}`);
-        }
-    }
-
-    async function handleReset() {
-        if (!confirm("Voulez-vous vraiment réinitialiser le parrainage ? Toutes les paires seront effacées.")) return;
-        
-        try {
-            const response = await fetch(`${API_BASE_URL}/reset`, { method: 'POST' });
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.error || 'Failed to reset');
-
-            alert(result.message);
-            parrainInfo.innerHTML = '';
-            filleulInfo.innerHTML = '';
-            await updateStats();
-        } catch (error) {
-            console.error('Reset failed:', error);
-            alert(`Erreur lors de la réinitialisation : ${error.message}`);
-        }
-    }
-
-    async function handleUndo() {
-        if (!confirm("Voulez-vous vraiment annuler le dernier tirage ?")) return;
-        
-        try {
-            const response = await fetch(`${API_BASE_URL}/undo`, { method: 'POST' });
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.error || 'Failed to undo');
+            if (!response.ok) throw new Error(result.error || 'Request failed');
             
             alert(result.message);
             parrainInfo.innerHTML = '';
             filleulInfo.innerHTML = '';
             await updateStats();
         } catch (error) {
-            console.error('Undo failed:', error);
-            alert(`Erreur lors de l'annulation : ${error.message}`);
+            console.error('API POST Error:', error);
+            alert(`Erreur : ${error.message}`);
         }
     }
-    
+
+    const handleImport = () => handleApiPost(`${API_BASE_URL}/import`, "Voulez-vous vraiment importer les données ? Cela écrasera les données actuelles.");
+    const handleReset = () => handleApiPost(`${API_BASE_URL}/reset`, "Voulez-vous vraiment réinitialiser le parrainage ? Toutes les paires seront effacées.");
+    const handleUndo = () => handleApiPost(`${API_BASE_URL}/undo`, "Voulez-vous vraiment annuler le dernier tirage ?");
+
     async function handleDraw() {
         drawBtn.disabled = true;
         parrainInfo.textContent = '...';
@@ -99,7 +69,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
 
             if (!response.ok) {
-                // Handle "no more students" message gracefully
                 if(response.status === 404) {
                     alert(result.message || 'Action impossible.');
                     parrainInfo.innerHTML = '';
@@ -117,7 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Draw failed:', error);
             alert(`Erreur lors du tirage : ${error.message}`);
         } finally {
-            // The button will be re-enabled by updateStats if applicable
+            // The button's state is managed by updateStats()
         }
     }
 
@@ -127,26 +96,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function triggerAnimation() {
+        if (!particlesContainer) return;
+
         const parrainRect = parrainCard.getBoundingClientRect();
         const filleulRect = filleulCard.getBoundingClientRect();
 
-        const burstOptions = {
-            count: 20,
-            spread: 40,
-            startVelocity: 30,
-            angle: 90
-        };
-        
-        // Emitter for Parrain
-        tsParticles.addEmitter({
-            position: {
-                x: ((parrainRect.left + parrainRect.right) / 2) * 100 / window.innerWidth,
-                y: ((parrainRect.top + parrainRect.bottom) / 2) * 100 / window.innerHeight,
-            },
-            size: {
-                width: 10,
-                height: 10
-            },
+        const emitterOptions = {
             life: {
                 duration: 0.2,
                 count: 1
@@ -156,35 +111,51 @@ document.addEventListener('DOMContentLoaded', () => {
                     speed: {min: 5, max: 10}
                 }
             }
+        };
+
+        particlesContainer.addEmitter({
+            ...emitterOptions,
+            position: {
+                x: ((parrainRect.left + parrainRect.right) / 2) * 100 / window.innerWidth,
+                y: ((parrainRect.top + parrainRect.bottom) / 2) * 100 / window.innerHeight,
+            }
         });
         
-        // Emitter for Filleul
-        tsParticles.addEmitter({
+        particlesContainer.addEmitter({
+            ...emitterOptions,
             position: {
                 x: ((filleulRect.left + filleulRect.right) / 2) * 100 / window.innerWidth,
                 y: ((filleulRect.top + filleulRect.bottom) / 2) * 100 / window.innerHeight,
-            },
-            size: {
-                width: 10,
-                height: 10
-            },
-            life: {
-                duration: 0.2,
-                count: 1
-            },
-            particles: {
-                move: {
-                    speed: {min: 5, max: 10}
-                }
             }
         });
     }
 
     async function initParticles() {
         if(window.tsParticles) {
-            await tsParticles.load({
+            particlesContainer = await tsParticles.load({
                 id: "particles-js",
-                options: { /* ... existing particle options ... */ }
+                options: {
+                    background: { color: { value: "transparent" } },
+                    fpsLimit: 60,
+                    particles: {
+                        number: { value: 50, density: { enable: true, area: 800 } },
+                        color: { value: "#FF851B" },
+                        shape: { type: "circle" },
+                        opacity: { value: { min: 0.1, max: 0.5 } },
+                        size: { value: { min: 1, max: 3 } },
+                        move: {
+                            enable: true,
+                            speed: 1,
+                            direction: "none",
+                            outModes: "out"
+                        }
+                    },
+                    interactivity: {
+                        events: { onHover: { enable: true, mode: "repulse" } },
+                        modes: { repulse: { distance: 100 } }
+                    },
+                    detectRetina: true
+                }
             });
         }
     }
