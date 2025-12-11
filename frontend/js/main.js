@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     // --- DOM Elements ---
     const importBtn = document.getElementById('import-btn');
+    const exportBtn = document.getElementById('export-csv-btn');
     const resetBtn = document.getElementById('reset-btn');
     const undoBtn = document.getElementById('undo-btn');
     const drawBtn = document.getElementById('draw-btn');
@@ -59,6 +60,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const handleImport = () => handleApiPost(`${API_BASE_URL}/import`, "Voulez-vous vraiment importer les données ? Cela écrasera les données actuelles.");
     const handleReset = () => handleApiPost(`${API_BASE_URL}/reset`, "Voulez-vous vraiment réinitialiser le parrainage ? Toutes les paires seront effacées.");
     const handleUndo = () => handleApiPost(`${API_BASE_URL}/undo`, "Voulez-vous vraiment annuler le dernier tirage ?");
+    
+    const handleExport = () => {
+        window.open(`${API_BASE_URL}/export/csv`, '_blank');
+    };
 
     async function handleDraw() {
         drawBtn.disabled = true;
@@ -162,6 +167,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Event Listeners ---
     importBtn.addEventListener('click', handleImport);
+    exportBtn.addEventListener('click', handleExport);
     resetBtn.addEventListener('click', handleReset);
     undoBtn.addEventListener('click', handleUndo);
     drawBtn.addEventListener('click', handleDraw);

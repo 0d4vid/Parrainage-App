@@ -1,9 +1,10 @@
 import os
 import random
 import pandas as pd
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, Response
 from .database import db
 from .models import Promotion, Etudiant, Binome
+import io
 
 # Create a Blueprint for API routes
 api_bp = Blueprint('api_bp', __name__, url_prefix='/api')
@@ -20,6 +21,46 @@ def get_sponsorship_rules():
 
 # --- API Routes ---
 
+@api_bp.route('/export/csv', methods=['GET'])
+def export_csv():
+    """
+    Exports the current list of pairings to a CSV file.
+    """
+    try:
+        pairings = Binome.query.all()
+        if not pairings:
+            return jsonify({"message": "Aucun parrainage à exporter."}), 404
+
+        # Prepare data for DataFrame
+        data = []
+        for p in pairings:
+            data.append({
+                'Parrain_Nom': p.parrain.nom,
+                'Parrain_Prenom': p.parrain.prenom,
+                'Parrain_Promotion': p.parrain.promotion.code,
+                'Filleul_Nom': p.filleul.nom,
+                'Filleul_Prenom': p.filleul.prenom,
+                'Filleul_Promotion': p.filleul.promotion.code,
+                'Date_Parrainage': p.timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            })
+        
+        df = pd.DataFrame(data)
+        
+        # Create an in-memory CSV file
+        output = io.StringIO()
+        df.to_csv(output, index=False, sep=';') # Use semicolon for better Excel compatibility
+        csv_data = output.getvalue()
+        
+        return Response(
+            csv_data,
+            mimetype="text/csv",
+            headers={"Content-disposition": "attachment; filename=parrainages.csv"}
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @api_bp.route('/draw', methods=['GET'])
 def draw_pair():
     """
@@ -29,7 +70,6 @@ def draw_pair():
         rules = get_sponsorship_rules()
         filleul_promo_codes = list(rules.values())
 
-        # 1. Select a random Filleul
         potential_filleuls = db.session.query(Etudiant).join(Promotion).filter(
             Promotion.code.in_(filleul_promo_codes),
             Etudiant.est_parraine == False
@@ -41,18 +81,11 @@ def draw_pair():
         filleul = random.choice(potential_filleuls)
         filleul_promo_code = filleul.promotion.code
 
-        # 2. Determine the corresponding Parrain promotion
-        parrain_promo_code = None
-        for parrain_code, sponsored_code in rules.items():
-            if sponsored_code == filleul_promo_code:
-                parrain_promo_code = parrain_code
-                break
+        parrain_promo_code = next((p_code for p_code, f_code in rules.items() if f_code == filleul_promo_code), None)
         
         if not parrain_promo_code:
             return jsonify({"error": f"Aucune promotion de parrain correspondante trouvée pour {filleul_promo_code}"}), 500
 
-        # 3. Select a Parrain from the corresponding promotion
-        # Priority 1: Parrains with 0 filleuls
         potential_parrains_prio1 = db.session.query(Etudiant).join(Promotion).filter(
             Promotion.code == parrain_promo_code,
             Etudiant.nb_filleuls == 0
@@ -62,49 +95,35 @@ def draw_pair():
         if potential_parrains_prio1:
             parrain = random.choice(potential_parrains_prio1)
         else:
-            # Priority 2: Parrains who already have filleuls (imbalance case)
             potential_parrains_prio2 = db.session.query(Etudiant).join(Promotion).filter(
                 Promotion.code == parrain_promo_code
             ).all()
             if potential_parrains_prio2:
-                # In a more complex scenario, we might want to choose the one with the fewest filleuls
                 parrain = random.choice(potential_parrains_prio2)
 
         if not parrain:
             return jsonify({"error": f"Aucun parrain disponible dans la promotion {parrain_promo_code}"}), 404
             
-        # 4. Create the pairing
         new_binome = Binome(filleul_id=filleul.id, parrain_id=parrain.id)
         
-        # 5. Update student statuses
         filleul.est_parraine = True
         parrain.nb_filleuls += 1
         
         db.session.add(new_binome)
         db.session.commit()
         
-        # 6. Return the result
         return jsonify(new_binome.to_dict()), 200
 
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
-
 @api_bp.route('/import', methods=['POST'])
 def import_students():
-    """
-    Imports students from the default CSV file.
-    This will clear all existing students and pairings before importing.
-    """
     try:
-        # Clear existing data by cascading deletes (or manually)
         Binome.query.delete()
         Etudiant.query.delete()
-        
-        # Reset autoincrement counters if using SQLite by deleting and recreating tables
-        # For simplicity, we just delete content. A more robust solution might be needed.
-        db.session.commit() # Commit deletions before adding new data
+        db.session.commit()
         
         project_dir = os.path.dirname(os.path.abspath(__file__))
         csv_path = os.path.join(project_dir, 'data', 'students.csv')
@@ -120,8 +139,7 @@ def import_students():
         students_added = 0
         for _, row in df.iterrows():
             promo = Promotion.query.filter_by(code=row['promotion']).first()
-            if not promo:
-                continue
+            if not promo: continue
             
             student = Etudiant(
                 nom=row['nom'],
@@ -134,10 +152,7 @@ def import_students():
 
         db.session.commit()
         
-        return jsonify({
-            "message": f"Successfully imported {students_added} students.",
-            "status": "success"
-        }), 201
+        return jsonify({ "message": f"Successfully imported {students_added} students." }), 201
 
     except Exception as e:
         db.session.rollback()
@@ -146,19 +161,10 @@ def import_students():
 
 @api_bp.route('/reset', methods=['POST'])
 def reset_sponsorship():
-    """
-    Resets the sponsorship by clearing all pairings and student states.
-    """
     try:
         Binome.query.delete()
-        
-        Etudiant.query.update({
-            'est_parraine': False,
-            'nb_filleuls': 0
-        })
-        
+        Etudiant.query.update({'est_parraine': False, 'nb_filleuls': 0})
         db.session.commit()
-        
         return jsonify({"message": "Sponsorship reset successfully."}), 200
     except Exception as e:
         db.session.rollback()
@@ -167,14 +173,8 @@ def reset_sponsorship():
 
 @api_bp.route('/stats', methods=['GET'])
 def get_stats():
-    """
-    Returns statistics about the remaining students.
-    """
     rules = get_sponsorship_rules()
     filleul_promos = list(rules.values())
-    
-    # We need to count students in sponsoring promos that are not fully "used up" if we want to be precise,
-    # but for a general counter, counting all potential sponsors is fine.
     parrain_promos = list(rules.keys())
 
     remaining_filleuls = db.session.query(Etudiant).join(Promotion).filter(
@@ -193,19 +193,14 @@ def get_stats():
 
 @api_bp.route('/undo', methods=['POST'])
 def undo_last_pairing():
-    """
-    Finds and deletes the most recent pairing.
-    """
     try:
         last_binome = Binome.query.order_by(Binome.timestamp.desc()).first()
-
         if not last_binome:
             return jsonify({"message": "Aucun parrainage à annuler."}), 404
 
         filleul = last_binome.filleul
         parrain = last_binome.parrain
 
-        # Revert student states
         filleul.est_parraine = False
         if parrain.nb_filleuls > 0:
             parrain.nb_filleuls -= 1
